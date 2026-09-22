@@ -6,3 +6,5 @@
 .light .hiddenRow{border-color:#eee}
 .hiddenRow span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media(max-width:600px){header{padding-top:calc(10px + env(safe-area-inset-top));padding-bottom:10px}.brand{font-size:20px}.headerBtns button{padding:9px 10px}main{padding-top:calc(82px + env(safe-area-inset-top))}}
+
+.bookHideBtn{margin-left:auto;padding:7px 10px;font-size:12px;background:#e91e8c;color:#fff}.light .bookHideBtn{color:#fff;background:#e91e8c}.audioRow{display:grid;grid-template-columns:54px 1fr auto;gap:8px}.audioOrder input{width:48px;padding:6px 4px;border-radius:8px;border:1px solid #555;background:transparent;color:inherit}.audioPick{display:flex;align-items:center;gap:8px;padding:9px 4px;border-bottom:1px solid #ffffff14}.light .audioPick{border-color:#eee}.audioPick input{width:20px;height:20px}.audioPickNo{display:inline-block;min-width:28px;text-align:right;opacity:.65}.practicePickBox{min-width:min(92vw,520px)}#practiceAudioList{max-height:55vh;overflow:auto;margin-top:10px}
