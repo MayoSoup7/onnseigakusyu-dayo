@@ -7,9 +7,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>英語耳</title>
-<link rel="manifest" href="manifest.webmanifest?v=13">
+<link rel="manifest" href="manifest.webmanifest?v=14">
 <link rel="apple-touch-icon" href="icon.png">
-<link rel="stylesheet" href="styles.css?v=13">
+<link rel="stylesheet" href="styles.css?v=14">
 </head>
 <body>
 <header>
@@ -21,10 +21,11 @@
 </header>
 <main>
   <section class="toolbar" id="editToolbar">
-    <label>Lesson <select id="lessonSelect"></select></label>
+    <label>Lesson <select id="lessonSelect">
+      <option value="1">Lesson 01</option><option value="2">Lesson 02</option><option value="3">Lesson 03</option><option value="4">Lesson 04</option><option value="5">Lesson 05</option><option value="6">Lesson 06</option><option value="7">Lesson 07</option><option value="8">Lesson 08</option><option value="9">Lesson 09</option><option value="10">Lesson 10</option><option value="11">Lesson 11</option><option value="12">Lesson 12</option><option value="13">Lesson 13</option><option value="14">Lesson 14</option><option value="15">Lesson 15</option><option value="16">Lesson 16</option><option value="17">Lesson 17</option><option value="18">Lesson 18</option><option value="19">Lesson 19</option><option value="20">Lesson 20</option><option value="21">Lesson 21</option><option value="22">Lesson 22</option><option value="23">Lesson 23</option><option value="24">Lesson 24</option><option value="25">Lesson 25</option><option value="26">Lesson 26</option>
+    </select></label>
     <button id="addPageBtn">＋ページ画像</button>
-    <button id="addAudioBtn">＋音声</button>
-    <button id="audioManagerBtn">🎵 音声管理</button>
+    <button id="audioLibraryBtn">🎵 音声ライブラリ</button>
     <button id="hideInfoBtn">🙈 非表示</button>
     <input id="pageFiles" type="file" accept="image/*" multiple hidden>
     <input id="audioFiles" type="file" accept="audio/*,.mp3,.m4a,.wav,.ogg" multiple hidden>
@@ -32,6 +33,14 @@
   <section id="lessonTitle"></section>
   <section id="pages"></section>
   <section id="bookView" hidden></section>
+  <section id="audioLibraryView" hidden>
+    <div class="audioLibraryHead">
+      <div><h2>🎵 音声ライブラリ</h2><p>Lessonとは別に、使う音声をここへ全部登録します。</p></div>
+      <button id="addAudioBtn">＋音声を追加</button>
+    </div>
+    <div class="audioLibraryHint">登録した音声は、各ページの「＋Practice」から複数選択して追加できます。番号入力・↑↓で順番も変更できます。</div>
+    <div id="audioList"></div>
+  </section>
   <section id="audioManager" hidden></section>
 </main>
 
@@ -57,9 +66,7 @@
 </form>
 </dialog>
 
-<dialog id="audioDialog">
-<div class="audioDialogBox"><h3>🎵 Lesson音声管理</h3><div id="audioList"></div><button id="closeAudioDialog">閉じる</button></div>
-</dialog>
+
 
 
 
@@ -77,6 +84,6 @@
 <button id="closeRecord">閉じる</button>
 </div>
 </dialog>
-<script src="app.js?v=13"></script>
+<script src="app.js?v=14"></script>
 </body>
 </html>
