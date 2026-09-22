@@ -13,16 +13,47 @@ async function seed(){for(let i=1;i<=26;i++)if(!await get('lessons','L'+i))await
 async function ensurePageStates(){const pages=await all('pages');for(const p of pages){if(!await get('pageStates',p.id))await put('pageStates',{id:p.id,visible:p.visible!==false})}}
 async function withVisibility(pages){return Promise.all(pages.map(async p=>{const st=await get('pageStates',p.id);return Object.assign({},p,{visible:st?st.visible:(p.visible!==false)})}))}
 function lessonLabel(n){return`Lesson ${String(n).padStart(2,'0')}`}function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function audioNaturalKey(name){
+  const s=String(name||'').toLowerCase();
+  const m=s.match(/(?:practice[-_ ]*)?(\d+)/);
+  const num=m?Number(m[1]):Number.MAX_SAFE_INTEGER;
+  const suffix=m? s.slice(m.index+m[0].length):s;
+  return {num,suffix,s};
+}
+function compareAudioName(a,b){
+  const A=audioNaturalKey(a.name),B=audioNaturalKey(b.name);
+  if(A.num!==B.num)return A.num-B.num;
+  const c=A.suffix.localeCompare(B.suffix,undefined,{numeric:true,sensitivity:'base'});
+  if(c!==0)return c;
+  return A.s.localeCompare(B.s,undefined,{numeric:true,sensitivity:'base'});
+}
 async function normalizeAudioLibrary(){
   const audios=await all('audios'); if(!audios.length)return;
-  const sorted=[...audios].sort((a,b)=>{const al=a.lesson??999,bl=b.lesson??999;if(al!==bl)return al-bl;return (a.order??0)-(b.order??0)});
-  for(let i=0;i<sorted.length;i++){const a=sorted[i];if(a.order!==i||a.lesson!==null){a.order=i;a.lesson=null;await put('audios',a)}}
+  // 初回だけ、既存の登録順を無視してファイル名の自然順に整列。
+  // 以後はユーザーが変更した順番を尊重するため、並び替え済みの順番を毎回再計算しない。
+  const marker=await get('lessons','__audioSortedByName');
+  if(marker?.done)return;
+  const sorted=[...audios].sort(compareAudioName);
+  for(let i=0;i<sorted.length;i++){const a=sorted[i];a.order=i;a.lesson=null;await put('audios',a)}
+  await put('lessons',{id:'__audioSortedByName',num:0,title:'done',done:true});
 }
+
 async function init(){await openDB();await seed();await ensurePageStates();await normalizeAudioLibrary();fillLessons();loadTheme();bind();await renderLesson()}
 function fillLessons(){const el=$('lessonSelect');if(!el)return;el.innerHTML=Array.from({length:26},(_,i)=>`<option value="${i+1}">${lessonLabel(i+1)}</option>`).join('');el.value=String(state.lesson);if(!el.value)el.selectedIndex=0}
 function pageHTML(p){const hidden=p.visible===false;const url=blobUrl(p.blob);return `<article class="page ${hidden?'hiddenPage':''}" ${hidden?'hidden':''} data-page="${p.id}"><div class="pageHead"><span class="pageNum">P.${esc(p.pageNo||'—')}</span><div class="pageActions"><button onclick="addPractice('${p.id}')">＋Practice</button><button class="danger" onclick="deletePage('${p.id}')">🗑 画像削除</button></div></div>${url?`<img src="${url}" alt="${esc(p.name||'ページ画像')}">`:''}<div id="prs-${p.id}"></div></article>`}
 async function renderLesson(){state.view='lesson';$('bookView').hidden=true;$('pages').hidden=false;$('editToolbar').hidden=false;$('audioLibraryView').hidden=true;$('audioManager').hidden=true;$('bookBtn').textContent='📖 本を読む';$('audioLibraryBtn').textContent='🎵 音声ライブラリ';const lesson=await get('lessons','L'+state.lesson);let pages=(await all('pages')).filter(p=>p.lesson===state.lesson).sort((a,b)=>a.order-b.order);pages=await withVisibility(pages);$('lessonTitle').innerHTML=`<h2>${lessonLabel(state.lesson)}</h2><div class="editHint">「🙈 非表示」でこのLessonの2ページ目以降をまとめて非表示。「👁 再表示」でまとめて戻せます。1ページ目は常に表示されます。</div>`;$('pages').innerHTML=pages.map(pageHTML).join('')||`<div class="page empty">このLessonにはまだページがありません。<br>「＋ページ画像」から追加してください。</div>`;updateLessonVisibilityButton(pages);await loadPractices()}
-async function loadPractices(){const prs=(await all('practices')).filter(p=>p.lesson===state.lesson);for(const p of prs){const el=document.querySelector(`#prs-${p.pageId}`);if(!el)continue;const au=p.audioId?await get('audios',p.audioId):null;el.insertAdjacentHTML('beforeend',`<div class="practice"><div class="practiceTop"><span class="practiceName">${esc(p.name)}</span><div class="practiceBtns"><button onclick="playPractice('${p.id}')">▶️</button><button onclick="editPractice('${p.id}')">編集</button><button onclick="recordPractice('${p.id}')">🎙️</button><button class="danger" onclick="deletePractice('${p.id}')">🗑</button></div></div><div class="audioChip">${au?esc(au.name):'音声未登録'}</div></div>`)}}
+async function loadPractices(){
+  const prs=(await all('practices')).filter(p=>p.lesson===state.lesson);
+  const byPage=new Map();
+  for(const p of prs){if(!byPage.has(p.pageId))byPage.set(p.pageId,[]);byPage.get(p.pageId).push(p)}
+  for(const [pageId,list] of byPage){
+    list.sort((a,b)=>(a.order??999999)-(b.order??999999));
+    for(let i=0;i<list.length;i++){if(list[i].order!==i){list[i].order=i;await put('practices',list[i])}}
+    const el=document.querySelector(`#prs-${pageId}`);if(!el)continue;
+    for(let i=0;i<list.length;i++){const p=list[i];const au=p.audioId?await get('audios',p.audioId):null;el.insertAdjacentHTML('beforeend',`<div class="practice"><div class="practiceTop"><span class="practiceOrderWrap"><input class="practiceOrderInput" type="number" min="1" max="${list.length}" value="${i+1}" onchange="setPracticeOrder('${p.id}',this.value)"></span><span class="practiceName">${esc(p.name)}</span><div class="practiceBtns"><button onclick="movePractice('${p.id}',-1)" title="上へ">↑</button><button onclick="movePractice('${p.id}',1)" title="下へ">↓</button><button onclick="playPractice('${p.id}')">▶️</button><button onclick="editPractice('${p.id}')">編集</button><button onclick="recordPractice('${p.id}')">🎙️</button><button class="danger" onclick="deletePractice('${p.id}')">🗑</button></div></div><div class="audioChip">${au?esc(au.name):'音声未登録'}</div></div>`)}
+  }
+}
+
 async function addPages(files){if(!files?.length)return;let pages=(await all('pages')).filter(p=>p.lesson===state.lesson);let order=pages.length;for(const f of files){await put('pages',{id:uid(),lesson:state.lesson,order:order,pageNo:guessPageNo(f.name,order+1),visible:true,blob:f,name:f.name});order++}$('pageFiles').value='';await renderLesson()}
 function guessPageNo(name,n){const m=name.match(/(?:P|p|page|ページ)[ _-]?(\d+)/);return m?m[1]:n}
 async function deletePage(id){if(!confirm('このページ画像を削除しますか？\nこのページのPracticeも削除されます。'))return;const prs=(await all('practices')).filter(p=>p.pageId===id);for(const p of prs)await del('practices',p.id);await del('pages',id);await renderLesson()}
@@ -46,21 +77,46 @@ function updateLessonVisibilityButton(pages){
 async function addPractice(pageId){
   state.practicePageId=pageId;
   const audios=(await all('audios')).sort((a,b)=>a.order-b.order);
-  $('practiceAudioList').innerHTML=audios.length?audios.map((a,i)=>`<label class="audioPick"><input type="checkbox" value="${a.id}"><span class="audioPickNo">${i+1}</span><span>${esc(a.name)}</span></label>`).join(''):'<div class="empty">先に「🎵 音声ライブラリ」から音声を登録してください。</div>';
+  $('practiceAudioList').innerHTML=audios.length?audios.map((a,i)=>`<label class="audioPick"><input type="checkbox" value="${a.id}" checked="false"><span class="audioPickNo">${i+1}</span><span>${esc(a.name)}</span></label>`).join(''):'<div class="empty">先に「🎵 音声ライブラリ」から音声を登録してください。</div>';
+  // iOS Safari等がフォーム状態を復元しても、毎回必ず未選択から開始する。
+  document.querySelectorAll('#practiceAudioList input[type=checkbox]').forEach(x=>x.checked=false);
   $('practiceAudioDialog').showModal();
 }
 async function savePracticeSelection(){
   const page=await get('pages',state.practicePageId);if(!page)return;
   const ids=[...document.querySelectorAll('#practiceAudioList input[type=checkbox]:checked')].map(x=>x.value);
-  if(!ids.length){await put('practices',{id:uid(),pageId:page.id,lesson:page.lesson,name:'Practice',audioId:null});}
-  else{const allAudios=await all('audios');for(const id of ids){const a=allAudios.find(x=>x.id===id);if(a)await put('practices',{id:uid(),pageId:page.id,lesson:page.lesson,name:a.name.replace(/\.[^/.]+$/,''),audioId:a.id})}}
+  const existing=(await all('practices')).filter(p=>p.pageId===page.id);
+  let order=existing.reduce((m,p)=>Math.max(m,p.order??-1),-1)+1;
+  if(!ids.length){await put('practices',{id:uid(),pageId:page.id,lesson:page.lesson,name:'Practice',audioId:null,order});}
+  else{const allAudios=await all('audios');for(const id of ids){const a=allAudios.find(x=>x.id===id);if(a){await put('practices',{id:uid(),pageId:page.id,lesson:page.lesson,name:a.name.replace(/\.[^/.]+$/,''),audioId:a.id,order:order++})}}}
+  document.querySelectorAll('#practiceAudioList input[type=checkbox]').forEach(x=>x.checked=false);
+  $('practiceAudioList').innerHTML='';
   $('practiceAudioDialog').close();await renderCurrentView();
 }
+async function reorderPractices(list){for(let n=0;n<list.length;n++){list[n].order=n;await put('practices',list[n])}}
+async function movePractice(id,dir){
+  const p=await get('practices',id);if(!p)return;
+  const list=(await all('practices')).filter(x=>x.pageId===p.pageId).sort((a,b)=>(a.order??999999)-(b.order??999999));
+  const i=list.findIndex(x=>x.id===id),j=i+dir;if(i<0||j<0||j>=list.length)return;
+  [list[i],list[j]]=[list[j],list[i]];
+  await reorderPractices(list);
+  await renderCurrentView();
+}
+async function setPracticeOrder(id,value){
+  const p=await get('practices',id);if(!p)return;
+  const list=(await all('practices')).filter(x=>x.pageId===p.pageId).sort((a,b)=>(a.order??999999)-(b.order??999999));
+  const from=list.findIndex(x=>x.id===id);let to=Math.max(1,Math.min(list.length,Number(value)||1))-1;
+  if(from<0||to===from){await renderCurrentView();return}
+  const [item]=list.splice(from,1);list.splice(to,0,item);
+  await reorderPractices(list);
+  await renderCurrentView();
+}
+
 async function editPractice(id){state.editing=id;const p=await get('practices',id);$('practiceName').value=p.name;const audios=(await all('audios')).sort((a,b)=>a.order-b.order);$('audioSelect').innerHTML='<option value="">音声なし</option>'+audios.map(a=>`<option value="${a.id}" ${a.id===p.audioId?'selected':''}>${esc(a.name)}</option>`).join('');$('editDialog').showModal()}
 async function savePractice(){const p=await get('practices',state.editing);p.name=$('practiceName').value.trim()||'Practice';p.audioId=$('audioSelect').value||null;await put('practices',p);$('editDialog').close();await renderCurrentView()}
 async function deletePractice(id){if(!confirm('このPracticeを削除しますか？（音声ファイル自体は削除しません）'))return;await del('practices',id);await renderCurrentView()}
 async function addAudios(files){if(!files?.length)return;const audios=await all('audios');let order=audios.length;for(const f of files){await put('audios',{id:uid(),lesson:null,order:order++,name:f.name,blob:f})}$('audioFiles').value='';await openAudioLibrary()}
-async function renderAudioLibrary(){const list=(await all('audios')).sort((a,b)=>a.order-b.order);$('audioList').innerHTML=list.length?list.map((a,i)=>`<div class="audioRow"><span class="audioOrder"><input type="number" min="1" max="${list.length}" value="${i+1}" onchange="setAudioOrder('${a.id}',this.value)"></span><span class="name">${esc(a.name)}</span><div><button onclick="renameAudio('${a.id}')">✏️ 名前</button><button onclick="moveAudio('${a.id}',-1)">↑</button><button onclick="moveAudio('${a.id}',1)">↓</button><button onclick="playAudioById('${a.id}')">▶️</button><button class="danger" onclick="deleteAudio('${a.id}')">🗑</button></div></div>`).join(''):'<div class="empty">まだ音声がありません。<br>「＋音声を追加」からまとめて登録できます。</div>'}
+async function renderAudioLibrary(){const list=(await all('audios')).sort((a,b)=>(a.order??999999)-(b.order??999999));$('audioList').innerHTML=list.length?list.map((a,i)=>`<div class="audioRow"><span class="audioOrder"><input type="number" min="1" max="${list.length}" value="${i+1}" onchange="setAudioOrder('${a.id}',this.value)"></span><span class="name">${esc(a.name)}</span><div><button onclick="renameAudio('${a.id}')">✏️ 名前</button><button onclick="moveAudio('${a.id}',-1)">↑</button><button onclick="moveAudio('${a.id}',1)">↓</button><button onclick="playAudioById('${a.id}')">▶️</button><button class="danger" onclick="deleteAudio('${a.id}')">🗑</button></div></div>`).join(''):'<div class="empty">まだ音声がありません。<br>「＋音声を追加」からまとめて登録できます。</div>'}
 async function openAudioLibrary(){state.view='audio';$('editToolbar').hidden=true;$('pages').hidden=true;$('lessonTitle').innerHTML='';$('bookView').hidden=true;$('audioManager').hidden=true;$('audioLibraryView').hidden=false;$('bookBtn').textContent='📖 本を読む';$('audioLibraryBtn').textContent='← Lessonに戻る';await renderAudioLibrary()}
 async function closeAudioLibrary(){state.view='lesson';$('audioLibraryView').hidden=true;$('audioLibraryBtn').textContent='🎵 音声ライブラリ';await renderLesson()}
 async function renameAudio(id){const a=await get('audios',id);if(!a)return;const name=prompt('音声タイトルを入力してください',a.name)||'';if(!name.trim())return;a.name=name.trim();await put('audios',a);await renderAudioLibrary()}
@@ -90,8 +146,21 @@ async function openBook(){
 async function toggleBookLessonVisibility(lesson){const pages=await withVisibility((await all('pages')).filter(p=>p.lesson===lesson).sort((a,b)=>a.order-b.order));if(pages.length<=1)return;const hasHidden=pages.slice(1).some(p=>p.visible===false);const visible=hasHidden;for(const pg of pages.slice(1))await put('pageStates',{id:pg.id,visible});await openBook()}
 function closeBook(){state.view='lesson';$('bookBtn').textContent='📖 本を読む';renderLesson()}
 function pageHTMLBook(p){return `<article class="page" data-page="${p.id}"><div class="pageHead"><span class="pageNum">P.${esc(p.pageNo||'—')}</span></div>${p.blob?`<img src="${blobUrl(p.blob)}" alt="${esc(p.name||'ページ画像')}">`:''}<div id="bookprs-${p.id}"></div></article>`}
-async function loadPracticesBook(){for(const p of await all('practices')){const el=document.querySelector(`#bookprs-${p.pageId}`);if(!el)continue;const a=p.audioId?await get('audios',p.audioId):null;el.insertAdjacentHTML('beforeend',`<div class="practice"><div class="practiceTop"><span class="practiceName">${esc(p.name)}</span><div class="practiceBtns"><button onclick="playPractice('${p.id}')">▶️</button><button onclick="recordPractice('${p.id}')">🎙️</button></div></div><div class="audioChip">${a?esc(a.name):'音声未登録'}</div></div>`)}}
+async function loadPracticesBook(){
+  const prs=await all('practices');
+  const grouped=new Map();
+  for(const p of prs){if(!grouped.has(p.pageId))grouped.set(p.pageId,[]);grouped.get(p.pageId).push(p)}
+  for(const list of grouped.values()){
+    list.sort((a,b)=>(a.order??999999)-(b.order??999999));
+    for(const p of list){
+      const el=document.querySelector(`#bookprs-${p.pageId}`);if(!el)continue;
+      const a=p.audioId?await get('audios',p.audioId):null;
+      el.insertAdjacentHTML('beforeend',`<div class="practice"><div class="practiceTop"><span class="practiceName">${esc(p.name)}</span><div class="practiceBtns"><button onclick="playPractice('${p.id}')">▶️</button><button onclick="recordPractice('${p.id}')">🎙️</button></div></div><div class="audioChip">${a?esc(a.name):'音声未登録'}</div></div>`);
+    }
+  }
+}
+
 function loadTheme(){const saved=localStorage.getItem('eigomimi-theme');state.dark=saved!=='light';applyTheme()}function applyTheme(){document.body.classList.toggle('light',!state.dark);$('themeBtn').textContent=state.dark?'☀️':'🌙';localStorage.setItem('eigomimi-theme',state.dark?'dark':'light')}
 function bind(){$('themeBtn').onclick=()=>{state.dark=!state.dark;applyTheme()};$('addPageBtn').onclick=()=>$('pageFiles').click();$('pageFiles').onchange=e=>addPages(e.target.files);$('addAudioBtn').onclick=()=>$('audioFiles').click();$('audioFiles').onchange=e=>addAudios(e.target.files);$('audioLibraryBtn').onclick=()=>state.view==='audio'?closeAudioLibrary():openAudioLibrary();$('cancelPracticePick').onclick=()=>$('practiceAudioDialog').close();$('savePracticePick').onclick=e=>{e.preventDefault();savePracticeSelection()};$('lessonSelect').onchange=async e=>{state.lesson=Number(e.target.value)||1;await renderLesson()};$('bookBtn').onclick=()=>state.view==='book'?closeBook():openBook();$('hideInfoBtn').onclick=toggleLessonVisibility;$('savePractice').onclick=e=>{e.preventDefault();savePractice()};$('play').onclick=()=>audio.paused?audio.play():audio.pause();audio.onplay=()=>$('play').textContent='⏸';audio.onpause=()=>$('play').textContent='▶️';$('seek').oninput=()=>{if(audio.duration)audio.currentTime=Number($('seek').value)/1000*audio.duration};$('restart').onclick=()=>{audio.currentTime=state.A??0;audio.play()};$('repeat').onclick=()=>{state.repeat=!state.repeat;$('repeat').style.background=state.repeat?'#e91e8c':''};$('speed').onchange=()=>audio.playbackRate=Number($('speed').value);$('setA').onclick=()=>{state.A=audio.currentTime;updateAB()};$('setB').onclick=()=>{state.B=audio.currentTime;updateAB()};$('ab').onclick=()=>{state.ab=!state.ab;if(state.ab&&state.A===null)state.A=audio.currentTime;if(state.ab&&state.B===null&&isFinite(audio.duration))state.B=audio.duration;updateAB()}}
-window.addPractice=addPractice;window.editPractice=editPractice;window.playPractice=playPractice;window.recordPractice=recordPractice;window.deletePage=deletePage;window.deletePractice=deletePractice;window.playAudioById=playAudioById;window.deleteAudio=deleteAudio;window.renameAudio=renameAudio;window.savePracticeSelection=savePracticeSelection;window.moveAudio=moveAudio;window.setAudioOrder=setAudioOrder;window.toggleBookLessonVisibility=toggleBookLessonVisibility;
+window.addPractice=addPractice;window.editPractice=editPractice;window.playPractice=playPractice;window.recordPractice=recordPractice;window.deletePage=deletePage;window.deletePractice=deletePractice;window.playAudioById=playAudioById;window.deleteAudio=deleteAudio;window.renameAudio=renameAudio;window.savePracticeSelection=savePracticeSelection;window.moveAudio=moveAudio;window.setAudioOrder=setAudioOrder;window.movePractice=movePractice;window.setPracticeOrder=setPracticeOrder;window.toggleBookLessonVisibility=toggleBookLessonVisibility;
 init().catch(e=>alert('初期化に失敗しました: '+e.message));
